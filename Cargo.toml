@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "cpu",
+    "mem_devices",
+    "main"
+]
+
+resolver = "2"
