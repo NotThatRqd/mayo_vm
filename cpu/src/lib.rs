@@ -1,118 +1,115 @@
-use std::num::NonZeroU16;
+use device::{Device, MemoryStick};
+use instructions::{ADD_REG_REG, MOV_LIT_R1, MOV_LIT_R2};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-/// A device that can be "plugged in" to the CPU (or other devices that accept devices! ;) )
-pub trait MemDevice {
-    // The reason read_u8 and read_u16 do not have their returns wrapped
-    // in Option's is because that would mean we are sending more than
-    // 16/8 bits when this should be a 16 bit machine.
+pub mod device;
+pub mod instructions;
 
-    // todo: fact check
-    // write_u8 and write_u16 can return non-zero Result's because the
-    // compiler will use the value of zero as the unit Ok variant of the Result,
-    // so we're still only sending 16/8 bits but it is a bit more standardized.
-
-    fn read_u8(&self, index: usize) -> u8;
-    fn read_u16(&self, index: usize) -> u16;
-
-    /// A return value of [Ok] is a success, otherwise there is a
-    /// non-zero error value. This is not an absolute rule and devices
-    /// can use the return for whatever they want.
-    fn write_u8(&mut self, index: usize, val: u8) -> Result<(), NonZeroU16>;
-
-    /// A return value of [Ok] is a success, otherwise there is a
-    /// non-zero error value. This is not an absolute rule and devices
-    /// can use the return for whatever they want.
-    fn write_u16(&mut self, index: usize, val: u16) -> Result<(), NonZeroU16>;
+#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
+enum Register {
+    Ip = 0,
+    Acc,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
 }
 
-const fn is_even(n: usize) -> bool {
-    n % 2 == 0
-}
-
-/// The most boring implementation of [MemDevice] that is also functional.
-/// Internally, it holds an array of u8s that is `LENGTH` long (`[u8; LENGTH]`).
-/// MemoryStick also has [MemoryStick::iter_u8] that iterates over its contents
-/// as u8s, and [MemoryStick::iter_u16] that iterates over its contents as u16s.
-pub struct MemoryStick<const LENGTH: usize> {
-    /// The length of this must be even or things WILL BREAK!!
-    /// This is going to be interpreted as u16's sometimes and
-    /// u16's take up two bytes, so it must have an even number
-    /// of bytes or we will have an extra byte with no second part.
-    internal_mem: [u8; LENGTH],
-}
-
-impl<const LENGTH: usize> MemoryStick<LENGTH> {
-    /// The length of the memory this [MemoryStick] holds (in bytes)
-    /// must be even because it may be interpreted as u16's which
-    /// take up two bytes. It must also be less than or equal to
-    /// [u16::MAX]+1 in order to be index-able by a u16.
-    ///
-    /// See also: [MemoryStick::new_unchecked]
-    pub const fn try_new() -> Result<Self, &'static str> {
-        if is_even(LENGTH) && LENGTH <= u16::MAX as usize + 1 {
-            Ok(Self {
-                internal_mem: [0; LENGTH],
-            })
-        } else {
-            Err("length must be even and less than or equal to (u16::MAX)+1")
-        }
-    }
-
-    /// `LENGTH` must be even and less than [u16::MAX]+1 or else
-    /// things will break. See explanations at [MemoryStick::try_new]
-    pub const unsafe fn new_unchecked() -> Self {
-        Self {
-            internal_mem: [0; LENGTH],
-        }
-    }
-
-    pub fn iter_u8(&self) -> impl Iterator<Item = &u8> {
-        self.internal_mem.iter()
-    }
-
-    pub fn iter_u16(&self) -> impl Iterator<Item = u16> + '_ {
-        let len_in_u16 = self.internal_mem.len() / 2;
-        (0..len_in_u16).map(|i| self.read_u16(i))
+impl Register {
+    fn as_byte_offset(&self) -> usize {
+        // multiplied by two because registers are two bytes big
+        *self as usize * 2
     }
 }
 
-impl<const LENGTH: usize> MemDevice for MemoryStick<LENGTH> {
-    /// Panics on out of bounds
-    fn read_u8(&self, index: usize) -> u8 {
-        self.internal_mem[index]
+pub struct Cpu<T: Device> {
+    memory: T,
+    // ten registers * 2 bytes per
+    registers: MemoryStick<{10 * 2}>
+}
+
+impl<T: Device> Cpu<T> {
+    pub fn new(memory: T) -> Self {
+        Cpu {
+            memory,
+            registers: MemoryStick::try_new().unwrap()
+        }
     }
 
-    /// Panics on out of bounds
-    fn read_u16(&self, index: usize) -> u16 {
-        let offset = index * 2;
-        if offset > self.internal_mem.len() - 2 {
-            panic!("an index of {index} (or an offset of {offset}) is out of bounds for a u16 read on a {len} bytes long array", len=self.internal_mem.len());
+    pub fn debug(&self) {
+        for reg in Register::iter() {
+            let value = self.get_register(reg);
+            println!("{reg:?}: 0x{value:04X?}");
         }
-        u16::from_be_bytes(self.internal_mem[offset..=offset + 1].try_into().unwrap())
+        println!();
     }
 
-    /// An error of 1 means out of bounds
-    fn write_u8(&mut self, index: usize, val: u8) -> Result<(), NonZeroU16> {
-        if index > self.internal_mem.len() - 1 {
-            return Err(NonZeroU16::new(1).unwrap());
-        }
-
-        self.internal_mem[index] = val;
-        Ok(())
+    fn get_register(&self, reg: Register) -> u16 {
+        self.registers.read_u16(reg.as_byte_offset())
     }
 
-    /// An error of 1 means out of bounds
-    fn write_u16(&mut self, index: usize, val: u16) -> Result<(), NonZeroU16> {
-        let offset = index * 2;
-        if offset > self.internal_mem.len() - 2 {
-            return Err(NonZeroU16::new(1).unwrap());
+    fn set_register(&mut self, reg: Register, val: u16) {
+        self.registers.write_u16(reg.as_byte_offset(), val).unwrap();
+    }
+
+    /// Fetches the next instruction that the IP is pointing to and increases it by 1
+    fn fetch(&mut self) -> u8 {
+        let next_instruction_address = self.get_register(Register::Ip);
+        let next_instruction = self.memory.read_u8(next_instruction_address as usize);
+
+        // increase instruction pointer
+        self.set_register(Register::Ip, next_instruction_address + 1);
+
+        next_instruction
+    }
+
+    /// Fetches the next u16 that the IP is pointing to and increases it by 2
+    fn fetch16(&mut self) -> u16 {
+        let next_instruction_address = self.get_register(Register::Ip);
+        let next_instruction = self.memory.read_u16(next_instruction_address as usize);
+
+        // increase instruction pointer
+        self.set_register(Register::Ip, next_instruction_address + 2);
+
+        next_instruction
+    }
+
+    /// This function will map 0 to the IP, 1 to the Acc, 2 to R1, 3 to R2, etc.
+    fn fetch_register_offset(&mut self) -> usize {
+        // multiplied by two because registers are two bytes long
+        self.fetch() as usize * 2
+    }
+
+    fn execute(&mut self, instruction: u8) {
+        match instruction {
+            MOV_LIT_R1 => {
+                let literal = self.fetch16();
+                self.set_register(Register::R1, literal);
+            }
+            MOV_LIT_R2 => {
+                let literal = self.fetch16();
+                self.set_register(Register::R2, literal);
+            }
+            ADD_REG_REG => {
+                let first_register_offset = self.fetch_register_offset();
+                let second_register_offset = self.fetch_register_offset();
+
+                let register_value_1 = self.registers.read_u16(first_register_offset);
+                let register_value_2 = self.registers.read_u16(second_register_offset);
+
+                self.set_register(Register::Acc, register_value_1 + register_value_2);
+            }
+            _ => panic!("unknown instruction {instruction:02X?}")
         }
+    }
 
-        let bytes = val.to_be_bytes();
-
-        self.internal_mem[offset] = bytes[0];
-        self.internal_mem[offset + 1] = bytes[1];
-
-        Ok(())
+    pub fn step(&mut self) {
+        let instruction = self.fetch();
+        self.execute(instruction);
     }
 }
