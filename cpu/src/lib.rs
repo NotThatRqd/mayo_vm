@@ -1,13 +1,13 @@
 use device::{Device, MemoryStick};
-use instructions::{ADD_REG_REG, MOV_LIT_R1, MOV_LIT_R2};
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
+use instructions::*;
+use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::{EnumCount, EnumIter};
 
 pub mod device;
 pub mod instructions;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
-enum Register {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter, EnumCount)]
+pub enum Register {
     Ip = 0,
     Acc,
     R1,
@@ -29,8 +29,8 @@ impl Register {
 
 pub struct Cpu<T: Device> {
     memory: T,
-    // ten registers * 2 bytes per
-    registers: MemoryStick<{10 * 2}>
+    // multiplied by two because registers are two bytes long
+    registers: MemoryStick<{Register::COUNT * 2}>
 }
 
 impl<T: Device> Cpu<T> {
@@ -49,7 +49,16 @@ impl<T: Device> Cpu<T> {
         println!();
     }
 
-    fn get_register(&self, reg: Register) -> u16 {
+    pub fn view_memory_at(&self, address: usize, n: usize) {
+        print!("0x{address:04X?}: ");
+        for i in 0..n {
+            let val = self.memory.read_u8(address + i);
+            print!("0x{val:02X?} ");
+        }
+        println!();
+    }
+
+    pub fn get_register(&self, reg: Register) -> u16 {
         self.registers.read_u16(reg.as_byte_offset())
     }
 
@@ -81,19 +90,41 @@ impl<T: Device> Cpu<T> {
 
     /// This function will map 0 to the IP, 1 to the Acc, 2 to R1, 3 to R2, etc.
     fn fetch_register_offset(&mut self) -> usize {
+        let reg_num = self.fetch() as usize;
+        if reg_num >= Register::COUNT {
+            panic!("unknown register number {reg_num}");
+        }
         // multiplied by two because registers are two bytes long
-        self.fetch() as usize * 2
+        reg_num * 2
     }
 
     fn execute(&mut self, instruction: u8) {
         match instruction {
-            MOV_LIT_R1 => {
+            MOV_LIT_REG => {
                 let literal = self.fetch16();
-                self.set_register(Register::R1, literal);
+                let reg_offset = self.fetch_register_offset();
+                self.registers.write_u16(reg_offset, literal).unwrap();
             }
-            MOV_LIT_R2 => {
-                let literal = self.fetch16();
-                self.set_register(Register::R2, literal);
+            MOV_REG_REG => {
+                let reg_from_offset = self.fetch_register_offset();
+                let reg_to_offset = self.fetch_register_offset();
+
+                let val = self.registers.read_u16(reg_from_offset);
+                self.registers.write_u16(reg_to_offset, val).unwrap();
+            }
+            MOV_REG_MEM => {
+                let reg_from_offset = self.fetch_register_offset();
+                let address = self.fetch16() as usize;
+
+                let val = self.registers.read_u16(reg_from_offset);
+                self.memory.write_u16(address, val).unwrap();
+            }
+            MOV_MEM_REG => {
+                let address = self.fetch16() as usize;
+                let reg_to_offset = self.fetch_register_offset();
+
+                let val = self.memory.read_u16(address);
+                self.registers.write_u16(reg_to_offset, val).unwrap();
             }
             ADD_REG_REG => {
                 let first_register_offset = self.fetch_register_offset();
