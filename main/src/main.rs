@@ -10,53 +10,47 @@ fn main() {
 
     // Convenience function to write u8s to memory
     let mut index = 0;
-    let mut write_u8_to_memory = |value: u8| {
+    let mut add = |value: u8| {
         m.write_u8(index, value).unwrap();
         index += 1;
     };
 
-    // Move 0x1234 into R1
-    write_u8_to_memory(MOV_LIT_REG);
-    write_u8_to_memory(0x12);
-    write_u8_to_memory(0x34);
-    write_u8_to_memory(R1);
+    // Move the memory at 0x0100 into register R1
+    add(MOV_MEM_REG);
+    add(0x01);
+    add(0x00);
+    add(R1);
 
-    // Move 0xABCD into R2
-    write_u8_to_memory(MOV_LIT_REG);
-    write_u8_to_memory(0xAB);
-    write_u8_to_memory(0xCD);
-    write_u8_to_memory(R2);
+    add(MOV_LIT_REG);
+    add(0x00);
+    add(0x01);
+    add(R2);
 
-    // Add R1 and R2
-    write_u8_to_memory(ADD_REG_REG);
-    write_u8_to_memory(R1);
-    write_u8_to_memory(R2);
+    add(ADD_REG_REG);
+    add(R1);
+    add(R2);
 
-    // Move the value in the Accumulator to 0x0100 in memory
-    write_u8_to_memory(MOV_REG_MEM);
-    write_u8_to_memory(ACC);
-    write_u8_to_memory(0x01);
-    write_u8_to_memory(0x00);
+    add(MOV_REG_MEM);
+    add(ACC);
+    add(0x01);
+    add(0x00);
+
+    // If the acc != 0x0003 then jump to 0x0000
+    add(JMP_NOT_EQ);
+    add(0x00);
+    add(0x03);
+    add(0x00);
+    add(0x00);
     
     let mut cpu = Cpu::new(m);
 
-    cpu.step();
-    cpu.debug();
-    cpu.view_memory_at(cpu.get_register(cpu::Register::Ip) as usize, 8);
-    cpu.view_memory_at(0x0100, 8);
-
-    cpu.step();
-    cpu.debug();
-    cpu.view_memory_at(cpu.get_register(cpu::Register::Ip) as usize, 8);
-    cpu.view_memory_at(0x0100, 8);
-
-    cpu.step();
-    cpu.debug();
-    cpu.view_memory_at(cpu.get_register(cpu::Register::Ip) as usize, 8);
-    cpu.view_memory_at(0x0100, 8);
-
-    cpu.step();
-    cpu.debug();
-    cpu.view_memory_at(cpu.get_register(cpu::Register::Ip) as usize, 8);
-    cpu.view_memory_at(0x0100, 8);
+    // panics when it reaches the end of the program
+    // todo: make cleaner
+    loop {
+        cpu.debug();
+        cpu.view_memory_at(cpu.get_register(cpu::Register::Ip) as usize, 8);
+        cpu.view_memory_at(0x0100, 8);
+        println!();
+        cpu.step();
+    }
 }

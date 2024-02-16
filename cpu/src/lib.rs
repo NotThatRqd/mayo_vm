@@ -135,7 +135,18 @@ impl<T: Device> Cpu<T> {
 
                 self.set_register(Register::Acc, register_value_1 + register_value_2);
             }
-            _ => panic!("unknown instruction {instruction:02X?}")
+            JMP_NOT_EQ => {
+                // value to compare against
+                let val = self.fetch16();
+
+                // address to jump to
+                let address = self.fetch16();
+
+                if val != self.get_register(Register::Acc) {
+                    self.set_register(Register::Ip, address);
+                }
+            }
+            _ => panic!("unknown instruction 0x{instruction:02X?}")
         }
     }
 
